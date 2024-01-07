@@ -175,8 +175,12 @@ def process_message(msg, conn, addr, media, complete_msg_bytes):
             if client_name != name:
                 client_addr = client.media_addrs[media]
                 if client_addr is not None:
-                    # Send the original complete message bytes
-                    conn.sendto(complete_msg_bytes, client_addr)
+                    # conn.sendto(complete_msg_bytes,s client_addr)
+                    chunk_size = 512
+                    for i in range(0, len(complete_msg_bytes), chunk_size):
+                        chunk = complete_msg_bytes[i:i + chunk_size]
+                        conn.sendto(chunk, addr)
+                    conn.sendto(b'END_OF_MESSAGE', addr)
 
 # def media_server(media: str):
 #     if media == VIDEO:

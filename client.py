@@ -163,11 +163,17 @@ class ServerConnection(QThread):
     def handle_media(self, conn, media):
         global all_clients
         while self.connected:
-            msg_bytes, _ = conn.recvfrom(MEDIA_SIZE[media])
-            if not msg_bytes:
-                self.connected = False
-                break
-            msg = pickle.loads(msg_bytes)
+            # msg_bytes, _ = conn.recvfrom(MEDIA_SIZE[media])
+            complete_msg_bytes = b''
+            while True:
+                chunk, addr = conn.recvfrom(MEDIA_SIZE[media])
+                if chunk == b'END_OF_MESSAGE':
+                    break
+                complete_msg_bytes += chunk
+                if not complete_msg_bytes:
+                    self.connected = False
+                    break
+            msg = pickle.loads(complete_msg_bytes)
             # if type(msg) != Message:
             #     msg = pickle.loads(msg)
             #     print(msg.from_name, msg.data_type)
@@ -237,7 +243,7 @@ class ServerConnection(QThread):
                 break
             msg = Message(client.name, 'post', media, data)
             msg_data = pickle.dumps(msg)
-            chunk_size = 1024
+            chunk_size = 512
             for i in range(0, len(msg_data), chunk_size):
                 chunk = msg_data[i:i + chunk_size]
                 conn.sendto(chunk, addr)
