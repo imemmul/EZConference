@@ -201,6 +201,29 @@ class ServerConnection(QThread):
             self.add_msg_signal.emit(current_msg)
             conn.send_bytes(msg)
     
+    # def broadcast_media(self, conn, media):
+    #     while self.connected:
+    #         if media == 'video':
+    #             addr = VIDEO_ADDR
+    #             data = client.get_video()
+    #         elif media == 'audio':
+    #             addr = AUDIO_ADDR
+    #             data = client.get_audio()
+    #         else:
+    #             print("Invalid media type")
+    #             break
+    #         msg = Message(client.name, 'post', media, data)
+    #         # compressed_data = zlib.compress(pickle.dumps(msg))
+    #         # if len(compressed_data) > MEDIA_SIZE[media]:
+    #         #     print(f"Compressed data too large to send: {len(compressed_data)} bytes")
+    #         #     continue
+    #         # conn.sendto(compressed_data, addr)
+    #         msg_data = pickle.dumps(msg)
+    #         chunk_size = 1024  # or another value that works for you
+    #         for i in range(0, len(msg_data), chunk_size):
+    #             chunk = msg_data[i:i + chunk_size]
+    #             conn.sendto(chunk, addr)
+    
     def broadcast_media(self, conn, media):
         while self.connected:
             if media == 'video':
@@ -213,16 +236,13 @@ class ServerConnection(QThread):
                 print("Invalid media type")
                 break
             msg = Message(client.name, 'post', media, data)
-            # compressed_data = zlib.compress(pickle.dumps(msg))
-            # if len(compressed_data) > MEDIA_SIZE[media]:
-            #     print(f"Compressed data too large to send: {len(compressed_data)} bytes")
-            #     continue
-            # conn.sendto(compressed_data, addr)
             msg_data = pickle.dumps(msg)
-            chunk_size = 1024  # or another value that works for you
+            chunk_size = 1024
             for i in range(0, len(msg_data), chunk_size):
                 chunk = msg_data[i:i + chunk_size]
                 conn.sendto(chunk, addr)
+            conn.sendto(b'END_OF_MESSAGE', addr)
+            # conn.sendto(pickle.dumps(msg), addr)
 
 client = Client('You', None)
 all_clients = {}
