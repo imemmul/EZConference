@@ -88,54 +88,6 @@ def handle_client(name: str):
     
     disconnect_client(client)
 
-# def media_server(media: str):
-#     if media == VIDEO:
-#         PORT = VIDEO_PORT
-#     elif media == AUDIO:
-#         PORT = AUDIO_PORT
-
-#     conn = media_conns[media]
-#     conn.bind((IP, PORT))
-
-#     print(f"[LISTENING] {media} Server is listening on {IP}:{PORT}")
-
-#     # Buffer for accumulating chunks from each unique sender
-#     message_buffers = {}
-
-#     while True:
-#         chunk, addr = conn.recvfrom(MEDIA_SIZE[media])
-
-#         # If this is a new sender, initialize their buffer
-#         if addr not in message_buffers:
-#             message_buffers[addr] = b''
-
-#         # Append chunk to the sender's buffer
-#         message_buffers[addr] += chunk
-
-#         # Check if this is the last chunk
-#         # if is_last_chunk(chunk):
-#             # Decompress and process the complete message
-#         try:
-#             complete_msg_bytes = message_buffers[addr]
-#             msg_bytes = zlib.decompress(complete_msg_bytes)
-#             msg = pickle.loads(msg_bytes)
-#             name = msg.from_name
-#             if msg.request == ADD:
-#                 clients[name].media_addrs[media] = addr
-#                 print(f"[CONNECTING] {name} connected to {media} Server")
-#             else:
-#                 for client_name, client in clients.items():
-#                     print(f"client_name")
-#                     if client_name != name:
-#                         client_addr = client.media_addrs[media]
-#                         if client_addr is not None:
-#                             conn.sendto(complete_msg_bytes, client_addr)  # Send the original compressed data
-#         except Exception as e:
-#             print(f"Error handling message: {e}")
-
-#             # Clear the buffer for this sender
-#         message_buffers[addr] = b''
-
 
 def media_server(media: str):
     if media == VIDEO:
@@ -157,8 +109,19 @@ def media_server(media: str):
             complete_msg_bytes += chunk
 
         # Now you have the complete message, you can unpickle it
+        
+        if complete_msg_bytes:
+            try:
+                msg = pickle.loads(complete_msg_bytes)
+                process_message(msg, conn, addr, media)
+            except pickle.UnpicklingError as e:
+                print(f"Error unpickling data: {e}")
+            except Exception as e:
+                print(f"General error: {e}")
+        else:
+            print("Received incomplete data")
+            
         try:
-            msg = pickle.loads(complete_msg_bytes)
             # Process the message
             process_message(msg, conn, addr, media, complete_msg_bytes)
         except pickle.UnpicklingError as e:
@@ -181,60 +144,6 @@ def process_message(msg, conn, addr, media, complete_msg_bytes):
                         chunk = complete_msg_bytes[i:i + chunk_size]
                         conn.sendto(chunk, addr)
                     conn.sendto(b'END_OF_MESSAGE', addr)
-
-# def media_server(media: str):
-#     if media == VIDEO:
-#         PORT = VIDEO_PORT
-#     elif media == AUDIO:
-#         PORT = AUDIO_PORT
-
-#     conn = media_conns[media]
-#     conn.bind((IP, PORT))
-
-#     print(f"[LISTENING] {media} Server is listening on {IP}:{PORT}")
-
-#     while True:
-        
-#         complete_msg_bytes = b''
-#         while True:
-#             chunk, addr = conn.recvfrom(MEDIA_SIZE[media])
-#             if chunk == b'END_OF_MESSAGE':
-#                 break
-#             complete_msg_bytes += chunk
-#         try:
-#             msg = pickle.loads(complete_msg_bytes)
-#             name = msg.from_name
-#             if msg.request == ADD:
-#                 clients[name].media_addrs[media] = addr
-#                 print(f"[CONNECTING] {name} connected to {media} Server")
-#             else:
-#                 for client_name, client in clients.items():
-#                     if client_name != name:
-#                         addr = client.media_addrs[media]
-#                         if addr is not None:
-#                             conn.sendto(msg_bytes, addr)
-#         except pickle.UnpicklingError as e:
-#             print(f"Error unpickling data: {e}")
-        # msg_bytes, addr = conn.recvfrom(MEDIA_SIZE[media])
-        
-        # msg = pickle.loads(msg_bytes)
-        # name = msg.from_name
-        # if msg.request == ADD:
-        #     clients[name].media_addrs[media] = addr
-        #     print(f"[CONNECTING] {name} connected to {media} Server")
-        # else:
-        #     for client_name, client in clients.items():
-        #         if client_name != name:
-        #             addr = client.media_addrs[media]
-        #             if addr is not None:
-        #                 conn.sendto(msg_bytes, addr)
-
-
-def is_last_chunk(chunk):
-    # Implement your logic to determine if this chunk is the last part of the message
-    # For example, you might use a special byte sequence at the end of the message
-    # or include a header in each chunk indicating the total number of chunks
-    return chunk.endswith(b'END')
 
 
 def main():
