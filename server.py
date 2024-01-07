@@ -1,6 +1,5 @@
 import socket
 import threading
-import zlib
 import time
 import os
 import pickle
@@ -13,23 +12,13 @@ MAIN_PORT = 8765
 VIDEO_PORT = MAIN_PORT + 1
 AUDIO_PORT = MAIN_PORT + 2
 
-# Server address
-MAIN_ADDR = (IP, MAIN_PORT)
-VIDEO_ADDR = (IP, VIDEO_PORT)
-AUDIO_ADDR = (IP, AUDIO_PORT)
-
 VIDEO = 'video'
 AUDIO = 'audio'
 ADD = 'add'
 RM = 'rm'
 DISCONNECT_MSG = 'disconnect'
-MEDIA_SIZE = {VIDEO: 2500, AUDIO: 2500}
 
-
-clients = {} # list of clients connected to the server
-video_conn = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-audio_conn = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-media_conns = {VIDEO: video_conn, AUDIO: audio_conn}
+clients = {}  # list of clients connected to the server
 
 @dataclass
 class Client:
@@ -37,23 +26,15 @@ class Client:
     main_conn: socket.socket
     addr: str
     connected: bool
-    media_addrs: dict = field(default_factory= lambda: {VIDEO: None, AUDIO: None})
-    
+    media_conn: socket.socket = None
 
 def disconnect_client(client: Client):
     global clients
     print(f"[DISCONNECTING] {client.name} disconnected from Main Server")
-    client.media_addrs[VIDEO] = None
-    client.media_addrs[AUDIO] = None
-    msg = Message(client.name, RM)
-    for client_name in clients:
-        if client_name != client.name:
-            client_conn = clients[client_name].main_conn
-            client_conn.send_bytes(pickle.dumps(msg))
-
     client.connected = False
-    client.main_conn.disconnect()
-    
+    client.main_conn.close()
+    if client.media_conn:
+        client.media_conn.close()
     clients.pop(client.name)
 
 def handle_client(name: str):
@@ -64,30 +45,33 @@ def handle_client(name: str):
     for client_name in clients:
         msg = Message(client_name, ADD)
         if client_name != name:
-            conn.send_bytes(pickle.dumps(msg))
+            conn.send(pickle.dumps(msg))
     
     # Add current client to all clients
     msg = Message(name, ADD)
     for client_name in clients:
         if client_name != name:
             client_conn = clients[client_name].main_conn
-            client_conn.send_bytes(pickle.dumps(msg))
+            client_conn.send(pickle.dumps(msg))
 
     while client.connected:
-        msg_bytes = conn.recv_bytes()
-        if not msg_bytes:
+        try:
+            msg_bytes = conn.recv(4096)
+            if not msg_bytes:
+                break
+            msg = pickle.loads(msg_bytes)
+            if msg.request == DISCONNECT_MSG:
+                break
+            for name in msg.to_names:
+                if name not in clients:
+                    continue
+                client_conn = clients[name].main_conn
+                client_conn.send(pickle.dumps(msg))
+        except Exception as e:
+            print(f"Error: {e}")
             break
-        msg = pickle.loads(msg_bytes)
-        if msg.request == DISCONNECT_MSG:
-            break
-        for name in msg.to_names:
-            if name not in clients:
-                continue
-            client_conn = clients[name].main_conn
-            client_conn.send_bytes(pickle.dumps(msg))
     
     disconnect_client(client)
-
 
 def media_server(media: str):
     if media == VIDEO:
@@ -95,87 +79,59 @@ def media_server(media: str):
     elif media == AUDIO:
         PORT = AUDIO_PORT
 
-    conn = media_conns[media]
-    conn.bind((IP, PORT))
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((IP, PORT))
+    server_socket.listen()
 
     print(f"[LISTENING] {media} Server is listening on {IP}:{PORT}")
 
     while True:
-        complete_msg_bytes = b''
+        conn, addr = server_socket.accept()
+        threading.Thread(target=handle_media_client, args=(conn, addr, media)).start()
+
+def handle_media_client(conn, addr, media):
+    name = None
+    try:
         while True:
-            chunk, addr = conn.recvfrom(MEDIA_SIZE[media])
-            if chunk == b'END_OF_MESSAGE':
+            msg_bytes = conn.recv(4096)
+            if not msg_bytes:
                 break
-            complete_msg_bytes += chunk
+            msg = pickle.loads(msg_bytes)
+            name = msg.from_name
 
-        # Now you have the complete message, you can unpickle it
-        
-        if complete_msg_bytes:
-            try:
-                msg = pickle.loads(complete_msg_bytes)
-                process_message(msg, conn, addr, media)
-            except pickle.UnpicklingError as e:
-                print(f"Error unpickling data: {e}")
-            except Exception as e:
-                print(f"General error: {e}")
-        else:
-            print("Received incomplete data")
-            
-        try:
-            # Process the message
-            process_message(msg, conn, addr, media, complete_msg_bytes)
-        except pickle.UnpicklingError as e:
-            print(f"Error unpickling data: {e}")
-
-def process_message(msg, conn, addr, media, complete_msg_bytes):
-    name = msg.from_name
-    if msg.request == ADD:
-        clients[name].media_addrs[media] = addr
-        print(f"[CONNECTING] {name} connected to {media} Server")
-    else:
-        # Forward the message to other clients
-        for client_name, client in clients.items():
-            if client_name != name:
-                client_addr = client.media_addrs[media]
-                if client_addr is not None:
-                    # conn.sendto(complete_msg_bytes,s client_addr)
-                    chunk_size = 512
-                    for i in range(0, len(complete_msg_bytes), chunk_size):
-                        chunk = complete_msg_bytes[i:i + chunk_size]
-                        conn.sendto(chunk, addr)
-                    conn.sendto(b'END_OF_MESSAGE', addr)
-
+            if msg.request == ADD:
+                clients[name].media_conn = conn
+                print(f"[CONNECTING] {name} connected to {media} Server")
+            else:
+                # Forward the message to other clients
+                for client_name, client in clients.items():
+                    if client_name != name and client.media_conn:
+                        client.media_conn.send(msg_bytes)
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        if name:
+            clients[name].media_conn = None
 
 def main():
     global clients
     main_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    
     main_socket.bind((IP, MAIN_PORT))
-
     main_socket.listen()
     print(f"[LISTENING] Main Server is listening on {IP}:{MAIN_PORT}")
 
-    video_thread = threading.Thread(target=media_server, args=(VIDEO,))
-    video_thread.start()
-
-    audio_thread = threading.Thread(target=media_server, args=(AUDIO,))
-    audio_thread.start()
+    threading.Thread(target=media_server, args=(VIDEO,)).start()
+    threading.Thread(target=media_server, args=(AUDIO,)).start()
 
     while True:
         conn, addr = main_socket.accept()
-
-        # send names of all clients to new client
-        # names_list = list(clients.keys())
-        # conn.send_bytes(pickle.dumps(names_list))
-
-        # receive name of the new client
-        name = conn.recv_bytes().decode()
-        clients[name] = Client(name, conn, addr, True)
-        print(f"[NEW CONNECTION] {name} connected to Main Server")
-
-        client_thread = threading.Thread(target=handle_client, args=(name,))
-        client_thread.start()
-
+        try:
+            name = conn.recv(4096).decode()
+            clients[name] = Client(name, conn, addr, True)
+            print(f"[NEW CONNECTION] {name} connected to Main Server")
+            threading.Thread(target=handle_client, args=(name,)).start()
+        except Exception as e:
+            print(f"Connection Error: {e}")
 
 if __name__ == "__main__":
     try:
